@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches:
+    - main
+  pull_request:
+    branches:
+    - main
+
+jobs:
+  test:
+    runs-on: windows-2019
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.6', '3.7', '3.8', '3.9', '3.10', '3.11-dev']
+        architecture: ['x64', 'x86']
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v2
+      with:
+        python-version: ${{ matrix.python-version }}
+        architecture: ${{ matrix.architecture }}
+
+    - name: Show runner information
+      run: |
+        python --version
+        pip --version
+
+    # Need wheel so that we can use bdist_wheel
+    - name: Upgrade Python packaging tools
+      run: pip install --upgrade setuptools wheel
+
+    - name: Set Python user directory
+      run: python -c "import os,site;open(os.environ['GITHUB_ENV'], 'a').write('USER_DIR=%s\n' % os.path.dirname(site.USER_SITE).rstrip('-32'))"
+
+    - name: Build package
+      run: python setup.py --skip-verstamp build
+
+    - name: Install package
+      run: python setup.py install --user
+
+    - name: Run tests
+      run: python ${env:USER_DIR}\Scripts\pywin32_testall.py -v -skip-adodbapi
+
+    - name: Build wheels
+      run: |
+        python setup.py bdist_wheel --skip-build
+
+    # 3.10 dropped support for bdist_wininst. If we had both 3.9 and 3.10 available in a single
+    # environment we could also build the .exe for 3.10+ - but for now, we can't.
+    - if: matrix.python-version != '3.10' && matrix.python-version != '3.11-dev'
+      name: Build installers
+      run: |
+        python setup.py bdist_wininst --skip-build --target-version=${{ matrix.python-version }}
+
+    - uses: actions/upload-artifact@v2
+      if: ${{ always() }}
+      with:
+        name: artifacts
+        path: |
+          dist/*.whl
+          dist/*.exe
+
+  black:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: psf/black@stable
+        with:
+          options: "--fast --check --diff --verbose"
